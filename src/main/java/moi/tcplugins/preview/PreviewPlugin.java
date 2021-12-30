@@ -11,6 +11,7 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.StringTokenizer;
 
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
@@ -43,8 +44,12 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		private String arcName;
 		
 		public Throwable throwable;
+		public Throwable nonBlockingthrowable;
 		public int msgCount; 
 		
+		public int linesAsFilesCounter;
+		public List<String> linesAsFiles;
+
 		public int metadataCounter;
 		public String[] metadataNames;
 		public String[] metadataValues;
@@ -71,6 +76,11 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			parse(catalogInfo, path, 10000);
 		} catch (Throwable e) {
 			catalogInfo.throwable = e;
+		}
+		try {
+			catalogInfo.linesAsFiles = linesAsFiles(catalogInfo.contents, 60, 75, 15);
+		} catch (Throwable e) {
+			catalogInfo.nonBlockingthrowable = e;
 		}
 		return catalogInfo;
 	}
@@ -114,6 +124,52 @@ public class PreviewPlugin extends WCXPluginAdapter {
 	    }
 	    		  
 	}
+   
+   	private List<String> linesAsFiles(String contents, int minLineLength, int maxLineLength, int maxNumLines) {
+   		List<String> linesAsFiles = new ArrayList<>();
+   		String s = contents.replaceAll("[^a-zA-Z0-9 ]","-");
+   	    StringTokenizer tokenizer = new StringTokenizer(s, " ,;\n");
+   	    StringBuffer sb = new StringBuffer();
+   	    while (tokenizer.hasMoreElements() && linesAsFiles.size() < maxNumLines) {
+   	    	String next = tokenizer.nextToken();
+   	    	insert(linesAsFiles, sb, next, minLineLength, maxLineLength, maxNumLines);
+   	    }
+   	    if (linesAsFiles.size() < maxNumLines) {
+   	    	linesAsFiles.add(sb.toString());
+   	    }
+   	    return linesAsFiles;
+   	}
+
+   	private void insert (List<String> linesAsFiles, StringBuffer sb, String next, int minLineLength, int maxLineLength, int maxNumLines) {
+	    if (log.isDebugEnabled()) {
+		      log.debug("insert: linesAsFiles.size=" + linesAsFiles.size() + ";sb=[" + sb + "]; next=[" + next + "].");
+	    }
+	   	if (sb.length() + " ".length() + next.length() > maxLineLength) {
+	   		if (sb.length() >= minLineLength) {
+	   			linesAsFiles.add(sb.toString());
+	   			if (linesAsFiles.size() < maxNumLines) {
+		   			sb.delete(0, sb.length());
+		   			// sb.append(twoDigits(linesAsFiles.size())+"-");
+		   			insert(linesAsFiles, sb, next, minLineLength, maxLineLength, maxNumLines);
+	   			}
+	   		} else {
+	   			int addNumChars = maxLineLength-sb.length()-" ".length();
+	   			sb.append(" " + next.substring(0,addNumChars));
+	   			linesAsFiles.add(sb.toString());
+	   			if (linesAsFiles.size() < maxNumLines) {
+		   			sb.delete(0, sb.length());
+		   			// sb.append(twoDigits(linesAsFiles.size())+"-");
+		   			insert(linesAsFiles, sb, next.substring(addNumChars,next.length()), minLineLength, maxLineLength, maxNumLines);
+	   			}
+	   		}
+	   	} else {
+	   		sb.append(" ").append(next);
+	   	}
+   	}
+   	
+   	private String twoDigits(int number) {
+   		return (number < 10) ? "0"+number : ""+number;
+   	}
 
 	private void extractMetada(CatalogInfo catalogInfo, Metadata metadata) {
 		String[] metadataNames = metadata.names();
@@ -179,7 +235,8 @@ public class PreviewPlugin extends WCXPluginAdapter {
 				}
 				String ext = extension(fullDestName);
 				if (ext.equals("exception")) {
-					return save(catalogInfo, new File(fullDestName), catalogInfo.throwable, false);
+					return save(catalogInfo, new File(fullDestName), 
+							catalogInfo.throwable == null ? catalogInfo.nonBlockingthrowable : catalogInfo.throwable, false);
 				} else if (ext.equals("md")) {
 					InputStream is = PreviewPlugin.class.getResourceAsStream("/README.md");
 					return copyStream(is, new File(fullDestName), false);
@@ -232,8 +289,9 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		if (log.isDebugEnabled()) {
 			log.debug(this.getClass().getName() + ".readHeader(archiveData, headerData)");
 		}
+		CatalogInfo catalogInfo = null;
 		try {
-			CatalogInfo catalogInfo = (CatalogInfo) archiveData;
+			catalogInfo = (CatalogInfo) archiveData;
 			headerData.setArcName(catalogInfo.arcName);
 			if (catalogInfo.throwable != null) {
 				Throwable t = catalogInfo.throwable;
@@ -276,13 +334,19 @@ public class PreviewPlugin extends WCXPluginAdapter {
 					return SUCCESS;
 				} else {
 					catalogInfo.msgCount++;
-					log.debug("recursive readHeader to next case: " + catalogInfo.msgCount);
-					// return readHeader(archiveData, headerData);
 					// do not break, let it continue to next case
 				}
 			case 5:
 				if (getMetadata(catalogInfo, headerData)) {
 					log.debug("SUCCESS 11");
+					return SUCCESS;
+				} else {
+					catalogInfo.msgCount++;
+					// do not break, let it continue to next case
+				}
+			case 6:
+				if (getLineAsFile(catalogInfo, headerData)) {
+					log.debug("SUCCESS 12");
 					return SUCCESS;
 				}
 				// do not break, let it continue to next case
@@ -291,12 +355,20 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			}
 
 		} catch (Throwable e) {
-			log.error(e.getMessage(), e);
+			if (log.isErrorEnabled()) {
+				log.error(e.getMessage(), e);
+			}
+			if (catalogInfo.msgCount < 100) {
+				headerData.setFileName(e.getMessage() + ".exception");
+				catalogInfo.nonBlockingthrowable = e;
+				catalogInfo.msgCount++;
+				log.debug("SUCCESS after throwable 2",e);
+				return SUCCESS;
+			} else {
+				log.error("E_BAD_DATA",e);
+				return E_BAD_DATA;
+			}
 		}
-		if (log.isErrorEnabled()) {
-			log.error(this.getClass().getName() + ".readHeader() E_BAD_DATA");
-		}
-		return E_BAD_DATA;
 	}
 
 	private void createMainFile(HeaderData headerData, String arcName, String ext, int size) {
@@ -343,6 +415,17 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			String ne = name + "=" + value.replaceAll("[^a-zA-Z0-9 ]","-");
 			headerData.setFileName("_" + ne  + ".metadata");
 			headerData.setUnpSize(catalogInfo.sbMetadata.length());
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	private boolean getLineAsFile(CatalogInfo catalogInfo, HeaderData headerData) {
+		int contador = catalogInfo.linesAsFilesCounter++;
+		if (contador < catalogInfo.linesAsFiles.size()) {
+			headerData.setFileName(twoDigits(contador) + "." + catalogInfo.linesAsFiles.get(contador)  + ".line");
+			headerData.setUnpSize(catalogInfo.linesAsFiles.get(contador).length());
 			return true;
 		} else {
 			return false;
