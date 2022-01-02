@@ -1,0 +1,82 @@
+---
+helpFiles:
+- show: true
+  itemName: "readme.txt"
+  originFileName: "README.md"
+- show: false
+  itemName: "changes.txt"
+  originFileName: "changes.md"
+defaultFormat:
+  allMetadataDir:
+    show: true
+    itemName: "every-metadata/%NAME%=%VALUE%.metadata"
+  allMetadataFile:
+    show: true
+    itemName: "%DOCUMENT%.metadata"
+  preview:
+    show: true
+    itemName: "%DOCUMENT%.preview"
+    maxSize: 10000
+  contents:
+    show: true
+    itemName: "%DOCUMENT%.txt"
+    maxSize: -1
+  linesAsfiles:
+    show: true
+    itemName: "%NUMBER% %LINE%.line"
+    maxLength: 70
+    minLength: 50
+    numberOfLines: 20
+specificFormats:
+- allMetadataDir:
+    show: true
+    itemName: "all-metadata/%NAME%=%VALUE%.metadata"
+  allMetadataFile:
+    show: true
+    itemName: "%DOCUMENT%.metadata"
+  preview:
+    show: true
+    itemName: "%DOCUMENT%.preview"
+    maxSize: 10000
+  contents:
+    show: true
+    itemName: "%DOCUMENT%.txt"
+    maxSize: -1
+  linesAsfiles:
+    show: true
+    itemName: "%NUMBER% %LINE%.line"
+    maxLength: 70
+    minLength: 50
+    numberOfLines: 20
+  extension: "pdf"
+  specificMetadata:
+  - show: true
+    itemName: "title"
+    maxLength: 200
+    metadataName: "pdf:docinfo:title"
+  - show: true
+    itemName: "creator"
+    maxLength: 200
+    metadataName: "pdf:docinfo:creator"
+- allMetadataDir:
+    show: true
+    itemName: "all-metadata/%NAME%=%VALUE%.metadata"
+  allMetadataFile:
+    show: true
+    itemName: "%DOCUMENT%.metadata"
+  preview:
+    show: true
+    itemName: "%DOCUMENT%.preview"
+    maxSize: 10000
+  contents:
+    show: true
+    itemName: "%DOCUMENT%.txt"
+    maxSize: -1
+  linesAsfiles:
+    show: true
+    itemName: "%NUMBER% %LINE%.line"
+    maxLength: 70
+    minLength: 50
+    numberOfLines: 20
+  extension: "docx"
+  specificMetadata: null

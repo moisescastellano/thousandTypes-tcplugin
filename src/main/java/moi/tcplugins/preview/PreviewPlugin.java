@@ -15,6 +15,8 @@ import java.util.StringTokenizer;
 
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
+import org.apache.tika.parser.AbstractParser;
+import org.apache.tika.parser.AutoDetectParser;
 import org.apache.tika.parser.ParseContext;
 import org.apache.tika.parser.pdf.PDFParser;
 import org.apache.tika.sax.BodyContentHandler;
@@ -96,14 +98,20 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		FileInputStream inputStream = null;
               
 	    ParseContext pcontext = new ParseContext();
-	    PDFParser pdfparser = new PDFParser();
+	    AbstractParser parser;
+	    if ("pdf".equals(extension(path))) {
+	    	parser = new PDFParser();
+	    } else {
+	    	parser = new AutoDetectParser();
+	    	
+	    }
 	    long before = System.currentTimeMillis();
 	    try {
 	    	  inputStream = new FileInputStream(path);
 	    	  if (log.isDebugEnabled()) {
-	    		  log.debug("in parse: pcontext=[" + pcontext + "]; pdfparser=[" + pdfparser + "]; inputStream=[" + inputStream + "]; metadata=[" + metadata + "]");
+	    		  log.debug("in parse: pcontext=[" + pcontext + "]; parser=[" + parser + "]; inputStream=[" + inputStream + "]; metadata=[" + metadata + "]");
 	    	  }
-	    	  pdfparser.parse(inputStream, handler, metadata, pcontext);
+	    	  parser.parse(inputStream, handler, metadata, pcontext);
 	    	  catalogInfo.everythingRead = true;
 	    } catch (org.apache.tika.exception.WriteLimitReachedException e) {
 	    	catalogInfo.everythingRead = false;
@@ -273,6 +281,10 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			log.error(t.getMessage(), t);
 		}
 		return SUCCESS;
+	}
+	
+	private String extension(File file) {
+		return extension(file.getName());
 	}
 	
 	private String extension(String fileName) {
