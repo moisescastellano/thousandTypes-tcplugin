@@ -13,6 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.StringTokenizer;
 
+import javax.swing.JFrame;
+import javax.swing.JOptionPane;
+
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.AbstractParser;
@@ -22,6 +25,19 @@ import org.apache.tika.parser.pdf.PDFParser;
 import org.apache.tika.sax.BodyContentHandler;
 import org.xml.sax.SAXException;
 
+import com.fasterxml.jackson.core.exc.StreamReadException;
+import com.fasterxml.jackson.databind.DatabindException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+
+import moi.tcplugins.VersionCheck;
+import moi.tcplugins.preview.Config.Format;
+import moi.tcplugins.preview.Config.LinesAsFiles;
+import moi.tcplugins.preview.Config.ShowableHelpFile;
+import moi.tcplugins.preview.Config.ShowableItem;
+import moi.tcplugins.preview.Config.ShowableMaxSizeFile;
+import moi.tcplugins.preview.Config.SpecificFormat;
+import moi.tcplugins.preview.Config.SpecificMetadata;
 import plugins.wcx.HeaderData;
 import plugins.wcx.OpenArchiveData;
 import plugins.wcx.WCXPluginAdapter;
@@ -30,14 +46,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * @author Moises Castellano 2021
+ * @author Moises Castellano 2021-2022
  * https://github.com/moisescastellano/preview-plugin
  */
 
 
 public class PreviewPlugin extends WCXPluginAdapter {
 	
-	final Logger log = LoggerFactory.getLogger(PreviewPlugin.class); 
+	final static Logger log = LoggerFactory.getLogger(PreviewPlugin.class);
+	final static int[] pluginClassLoaderVersion = {2,3,1}; // min pluginClassLoader version 2.3.1
+	private final static String CONFIG_FILE = "config.yaml";
+	
+	Config config;
+	Format format;
+	
+	private enum ItemType {
+		LINE, METADATA, PREVIEW, CONTENTS, HELPFILE, EXCEPTION
+	}
 
 	private class CatalogInfo {
 		/**
@@ -57,37 +82,60 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		public String[] metadataValues;
 		public StringBuffer sbMetadata;
 		
-		public int importantMetadataCounter;
-		public String[] importantMetadataNames;
-		public String[] importantMetadataValues;
+		public int specificMetadataCounter;
+		
+		public int helpFilesCounter;
 
 		public boolean everythingRead;
 		public String contents;
+		
+		public ItemType itemType;
+		public ShowableItem showableItem;
 
 	}
-
+	
 	@Override
 	public Object openArchive(OpenArchiveData archiveData) {
 		if (log.isDebugEnabled()) {
-			log.debug(this.getClass().getName() + ".openArchive(archiveData)");
+			log.debug(PreviewPlugin.class + ".openArchive(archiveData)");
 		}
 		File path = new File(archiveData.getArcName());
 		CatalogInfo catalogInfo = new CatalogInfo();
 		catalogInfo.arcName = archiveData.getArcName();			
 		try {
-			parse(catalogInfo, path, 10000);
+			VersionCheck.checkPluginClassLoaderVersion(pluginClassLoaderVersion);
+			readConfig(archiveData.getArcName());
+			parse(catalogInfo, path, format.preview.maxSize);
 		} catch (Throwable e) {
+			JFrame frame = new JFrame();
+			JOptionPane.showMessageDialog(frame, e.getMessage(), "Error on openArchive", JOptionPane.ERROR_MESSAGE);
 			catalogInfo.throwable = e;
 		}
-		try {
-			catalogInfo.linesAsFiles = linesAsFiles(catalogInfo.contents, 60, 75, 15);
-		} catch (Throwable e) {
-			catalogInfo.nonBlockingthrowable = e;
-		}
+		
 		return catalogInfo;
 	}
 	
-   private void parse(CatalogInfo catalogInfo, File path, int writeLimit) throws IOException, TikaException, SAXException {
+
+	private void readConfig(String arcName) throws IOException, StreamReadException, DatabindException {
+		ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
+		InputStream is = PreviewPlugin.class.getClassLoader().getResourceAsStream(CONFIG_FILE);
+		this.config = mapper.readValue(is, Config.class);
+		this.format = config.defaultFormat;
+		String extension = extension(arcName);
+		if (extension.length() > 0) {
+			List<SpecificFormat> formats = this.config.specificFormats;
+			for (SpecificFormat format: formats) {
+				if (extension.equals(format.extension)) {
+					this.format = format; 
+				}
+			}
+		}
+		if (log.isDebugEnabled()) {
+			log.debug(PreviewPlugin.class.getName() + ": [" + config.defaultFormat.allMetadataDir.itemName + "]");
+		}
+	}
+	
+	private void parse(CatalogInfo catalogInfo, File path, int writeLimit) throws IOException, TikaException, SAXException {
 
 	   	if (log.isDebugEnabled()) {
 	   		log.debug("in parse: path=[" + path + "]");
@@ -102,17 +150,16 @@ public class PreviewPlugin extends WCXPluginAdapter {
 	    if ("pdf".equals(extension(path))) {
 	    	parser = new PDFParser();
 	    } else {
-	    	parser = new AutoDetectParser();
-	    	
+	    	parser = new AutoDetectParser();	    	
 	    }
 	    long before = System.currentTimeMillis();
 	    try {
-	    	  inputStream = new FileInputStream(path);
-	    	  if (log.isDebugEnabled()) {
-	    		  log.debug("in parse: pcontext=[" + pcontext + "]; parser=[" + parser + "]; inputStream=[" + inputStream + "]; metadata=[" + metadata + "]");
-	    	  }
-	    	  parser.parse(inputStream, handler, metadata, pcontext);
-	    	  catalogInfo.everythingRead = true;
+			inputStream = new FileInputStream(path);
+			if (log.isDebugEnabled()) {
+				log.debug("in parse: pcontext=[" + pcontext + "]; parser=[" + parser + "]; inputStream=[" + inputStream + "]; metadata=[" + metadata + "]");
+			}
+			parser.parse(inputStream, handler, metadata, pcontext);
+			catalogInfo.everythingRead = true;
 	    } catch (org.apache.tika.exception.WriteLimitReachedException e) {
 	    	catalogInfo.everythingRead = false;
 	    } finally {
@@ -175,8 +222,14 @@ public class PreviewPlugin extends WCXPluginAdapter {
 	   	}
    	}
    	
-   	private String twoDigits(int number) {
-   		return (number < 10) ? "0"+number : ""+number;
+   	private String nDigits(int number, int maxNumber) {
+   		if (maxNumber < 10) {
+   			return ""+number;
+   		} else if (maxNumber < 100) {
+   	   		return (number < 10) ? "0"+number : ""+number;
+   		} else {
+   	   		return (number < 10) ? "00"+number : (number < 100) ? "0"+number : ""+number;
+   		}
    	}
 
 	private void extractMetada(CatalogInfo catalogInfo, Metadata metadata) {
@@ -186,23 +239,13 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		catalogInfo.metadataValues = values;
 		catalogInfo.sbMetadata = new StringBuffer();
 		
-		List<String> importantMetadataNames = new ArrayList<>();
-		List<String> importantMetadataValues = new ArrayList<>();
-		
 		int i=0;
 		for (String name: metadataNames) {
 			String value = metadata.get(name);
 			values[i++] = value;
 			String ne = name + "=" + value;
 			catalogInfo.sbMetadata.append(ne).append("\n");
-			String importantName = isImportantMetadata(name);
-			if (importantName != null) {
-				importantMetadataNames.add(importantName);
-				importantMetadataValues.add(value);
-			}
 		}
-		catalogInfo.importantMetadataNames =  importantMetadataNames.toArray(new String[0]);
-		catalogInfo.importantMetadataValues =  importantMetadataValues.toArray(new String[0]);
 		
 		if (log.isDebugEnabled()) {
 		      log.debug("Metadata of the PDF:");
@@ -212,15 +255,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		}
 	}
 	
-	private final String IMPORTANT_PREFIX = "pdf:docinfo:";
-	
-	private String isImportantMetadata(String name) {
-		if (name.startsWith(IMPORTANT_PREFIX)) {
-			return name.substring(IMPORTANT_PREFIX.length());
-		}
-		return null;
-	}
-
 	@Override
 	public int closeArchive(Object archiveData) {
 		if (log.isDebugEnabled()) {
@@ -235,36 +269,36 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			log.debug(this.getClass().getName() + ".processFile(archiveData, operation=["+operation+"], destPath=["+destPath+"];destName=["+destName+"]");
 		}
 		CatalogInfo catalogInfo = (CatalogInfo) archiveData;
+		String fullDestName = (destPath==null?"":destPath) + destName;
 		try {
 			if (operation == PK_EXTRACT) {
-				String fullDestName = (destPath==null?"":destPath) + destName;
-				if (log.isDebugEnabled()) {
-					log.debug(this.getClass().getName() + ".processFile() EXTRACT from:[" + catalogInfo.arcName + "] to: [" + fullDestName + "]");
+				if (log.isDebugEnabled()) log.debug(this.getClass().getName() + ".processFile() EXTRACT from:[" + catalogInfo.arcName + "] to: [" + fullDestName + "]");
+				if (catalogInfo.throwable != null) {
+					return save(catalogInfo, new File(fullDestName), catalogInfo.throwable, false);
 				}
-				String ext = extension(fullDestName);
-				if (ext.equals("exception")) {
-					return save(catalogInfo, new File(fullDestName), 
-							catalogInfo.throwable == null ? catalogInfo.nonBlockingthrowable : catalogInfo.throwable, false);
-				} else if (ext.equals("md")) {
-					InputStream is = PreviewPlugin.class.getResourceAsStream("/README.md");
-					return copyStream(is, new File(fullDestName), false);
-				} else if (ext.equals("metadata")) {
+				if (catalogInfo.itemType == ItemType.EXCEPTION) {
+					return save(catalogInfo, new File(fullDestName), catalogInfo.nonBlockingthrowable, false);
+				}
+				if (catalogInfo.itemType == ItemType.METADATA) {
 					return save(catalogInfo, new File(fullDestName), catalogInfo.sbMetadata.toString(), false);
-				} else if (ext.equals("preview") || catalogInfo.everythingRead){
-					return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
-				} else {
-					try {
-						File path = new File(catalogInfo.arcName);
-						parse(catalogInfo, path, -1); // no writer limit
-						return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
-					} catch (Throwable e) {
-						if (log.isErrorEnabled()) {
-							log.error(this.getClass().getName() + ".processFile() TEST " + (destPath==null?"":destPath) + destName);
-						}
-						String s = "Error parsing file: " + e.getMessage();
-						return save(catalogInfo, new File(fullDestName), s, false);
-					}
 				}
+				if (catalogInfo.itemType == ItemType.PREVIEW || catalogInfo.itemType == ItemType.LINE){
+					return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
+				}
+				if (catalogInfo.itemType == ItemType.HELPFILE) {
+					Config.ShowableHelpFile shf = (Config.ShowableHelpFile) catalogInfo.showableItem;
+					InputStream is = PreviewPlugin.class.getResourceAsStream("/" + shf.originFileName);
+					return copyStream(is, new File(fullDestName), false);
+				}
+				if (catalogInfo.itemType == ItemType.CONTENTS){
+					if  (catalogInfo.everythingRead) {
+						return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
+					}
+					File path = new File(catalogInfo.arcName);
+					parse(catalogInfo, path, format.contents.maxSize);
+					return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
+				}
+				throw new Exception("Not expected case");
 			} else if (operation == PK_TEST) {
 				if (log.isDebugEnabled()) {
 					log.debug(this.getClass().getName() + ".processFile() TEST " + (destPath==null?"":destPath) + destName);
@@ -275,10 +309,16 @@ public class PreviewPlugin extends WCXPluginAdapter {
 					log.debug(this.getClass().getName() + ".processFile() SKIP " + (destPath==null?"":destPath) + destName);
 				}
 			}
-		} catch (RuntimeException e) {
-			log.error(e.getMessage(), e);
 		} catch (Throwable t) {
 			log.error(t.getMessage(), t);
+			try {
+				JFrame frame = new JFrame();
+				JOptionPane.showMessageDialog(frame, t.getMessage(), "Error on processFile", JOptionPane.ERROR_MESSAGE);
+				return save(catalogInfo, new File(fullDestName), t, false);
+			} catch (Throwable t2) {
+				log.error(t.getMessage(), t2);
+				return E_EWRITE;
+			}
 		}
 		return SUCCESS;
 	}
@@ -302,8 +342,10 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			log.debug(this.getClass().getName() + ".readHeader(archiveData, headerData)");
 		}
 		CatalogInfo catalogInfo = null;
+		int previousMsgCount = 0;
 		try {
 			catalogInfo = (CatalogInfo) archiveData;
+			previousMsgCount = catalogInfo.msgCount;
 			headerData.setArcName(catalogInfo.arcName);
 			if (catalogInfo.throwable != null) {
 				Throwable t = catalogInfo.throwable;
@@ -319,38 +361,46 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			}
 			switch (catalogInfo.msgCount) {
 			case 0:
-				if (catalogInfo.everythingRead) {
-					createMainFile(headerData, catalogInfo.arcName, "txt", catalogInfo.contents.length());
-					catalogInfo.msgCount+=2;
-				} else {
-					createMainFile(headerData, catalogInfo.arcName, "txt", 0);
-					catalogInfo.msgCount++;
+				catalogInfo.msgCount++;
+				if (getMainFile(catalogInfo, headerData)) {
+					log.debug("SUCCESS on main file" + catalogInfo.msgCount);
+					if (catalogInfo.everythingRead) {
+						catalogInfo.msgCount++; // skip preview as everything has already read and shown
+					}
+					return SUCCESS;
 				}
-				log.debug("SUCCESS on main file" + catalogInfo.msgCount);
-				return SUCCESS;
+				// do not break, let it continue to next case
 			case 1:
-				createMainFile(headerData, catalogInfo.arcName, "preview", catalogInfo.contents.length());
 				catalogInfo.msgCount++;
-				return SUCCESS;
+				if (getPreviewFile(catalogInfo, headerData)) {
+					return SUCCESS;
+				}
+				// do not break, let it continue to next case
 			case 2:
-				createMainFile(headerData, catalogInfo.arcName, "metadata", catalogInfo.sbMetadata.length());
 				catalogInfo.msgCount++;
-				return SUCCESS;
+				if (getMetadataFile(catalogInfo, headerData)) {
+					return SUCCESS;
+				}
+				// do not break, let it continue to next case
 			case 3:
-				createHelpFile(headerData, catalogInfo.arcName, "README.md", 1000);
-				catalogInfo.msgCount++;
-				return SUCCESS;
+				if (getHelpFile(catalogInfo, headerData)) {
+					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getHelpFile");
+					return SUCCESS;
+				} else {
+					catalogInfo.msgCount++;
+					// do not break, let it continue to next case
+				}
 			case 4:
-				if (getImportantMetadata(catalogInfo, headerData)) {
-					log.debug("SUCCESS 10");
+				if (getSpecificMetadata(catalogInfo, headerData)) {
+					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getSpecificMetadata");
 					return SUCCESS;
 				} else {
 					catalogInfo.msgCount++;
 					// do not break, let it continue to next case
 				}
 			case 5:
-				if (getMetadata(catalogInfo, headerData)) {
-					log.debug("SUCCESS 11");
+				if (getMetadataDir(catalogInfo, headerData)) {
+					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getMetadataDir");
 					return SUCCESS;
 				} else {
 					catalogInfo.msgCount++;
@@ -358,90 +408,214 @@ public class PreviewPlugin extends WCXPluginAdapter {
 				}
 			case 6:
 				if (getLineAsFile(catalogInfo, headerData)) {
-					log.debug("SUCCESS 12");
+					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getLineAsFile");
 					return SUCCESS;
+				} else {
+					catalogInfo.msgCount++;
+					// do not break, let it continue to next case
 				}
-				// do not break, let it continue to next case
 			default:
 				return E_END_ARCHIVE;
 			}
 
 		} catch (Throwable e) {
-			if (log.isErrorEnabled()) {
-				log.error(e.getMessage(), e);
-			}
-			if (catalogInfo.msgCount < 100) {
-				headerData.setFileName(e.getMessage() + ".exception");
-				catalogInfo.nonBlockingthrowable = e;
-				catalogInfo.msgCount++;
-				log.debug("SUCCESS after throwable 2",e);
-				return SUCCESS;
-			} else {
-				log.error("E_BAD_DATA",e);
-				return E_BAD_DATA;
-			}
+			if (log.isErrorEnabled()) log.error(e.getMessage(), e);
+			headerData.setFileName(e.getMessage() + ".exception");
+			headerData.setUnpSize(e.getMessage().length());
+			catalogInfo.nonBlockingthrowable = e;
+			catalogInfo.msgCount = previousMsgCount + 1;
+			catalogInfo.itemType = ItemType.EXCEPTION;
+			if (log.isDebugEnabled()) log.debug("SUCCESS after throwable",e);
+			return SUCCESS;
 		}
 	}
 
-	private void createMainFile(HeaderData headerData, String arcName, String ext, int size) {
+	private boolean getMainFile(CatalogInfo catalogInfo, HeaderData headerData) {
 		if (log.isDebugEnabled()) {
-			log.debug("createMainFile: arcName=" + arcName + "ext=" + ext + ";size=" + size);
+			log.debug("getMainFile: arcName=" + catalogInfo.arcName);
 		}
-		File f = new File(arcName);
-		int index = f.getName().lastIndexOf(".");
-		String name = f.getName().substring(0,index);
-		f = new File(f.getParent(), name + "." + ext);
-		headerData.setFileName(f.getName());
-		headerData.setUnpSize(size);
+		ShowableItem item = this.format.contents;
+		if (catalogInfo.everythingRead) {
+			headerData.setUnpSize(catalogInfo.contents.length());
+		} else {
+			headerData.setUnpSize(new File(catalogInfo.arcName).length());
+		}
+		catalogInfo.itemType = ItemType.CONTENTS;
+		return getFile(item, catalogInfo, headerData);
+	}
+
+	private boolean getPreviewFile(CatalogInfo catalogInfo, HeaderData headerData) {
+		if (log.isDebugEnabled()) {
+			log.debug("getPreviewFile: arcName=" + catalogInfo.arcName);
+		}
+		ShowableMaxSizeFile item = this.format.preview;
+		headerData.setUnpSize(catalogInfo.contents.length());
+		catalogInfo.itemType = ItemType.PREVIEW;
+		return getFile(item, catalogInfo, headerData);
+	}
+
+	private boolean getMetadataFile(CatalogInfo catalogInfo, HeaderData headerData) {
+		if (log.isDebugEnabled()) {
+			log.debug("getMetadataFile: arcName=" + catalogInfo.arcName);
+		}
+		ShowableItem item = this.format.allMetadataFile;
+		headerData.setUnpSize(catalogInfo.sbMetadata.length());
+		catalogInfo.itemType = ItemType.METADATA;
+		return getFile(item, catalogInfo, headerData);
 	}
 	
-	private void createHelpFile(HeaderData headerData, String arcName, String name, int size) {
-		if (log.isDebugEnabled()) {
-			log.debug("createHelpFile: name=" + name);
+	private boolean getFile(ShowableItem item, CatalogInfo catalogInfo, HeaderData headerData) {
+		if (!item.show) {
+			return false;
 		}
-		headerData.setFileName(name);
-		headerData.setUnpSize(size);
+		File f = new File(catalogInfo.arcName);
+		String itemName = replaceVariables(item, 1, 1, f.getName(), f.getName(), "");
+		headerData.setFileName(itemName);
+		return true;
 	}
 
-	private boolean getMetadata(CatalogInfo catalogInfo, HeaderData headerData) {
+	private boolean getHelpFile(CatalogInfo catalogInfo, HeaderData headerData) {
+		int contador = catalogInfo.helpFilesCounter++;
+		if (contador < config.helpFiles.size()) {
+			ShowableHelpFile shf = config.helpFiles.get(contador); 
+			if (shf.show) {
+				headerData.setFileName(shf.itemName);
+				if (log.isDebugEnabled()) {
+					log.debug("createHelpFile: name=" + shf.itemName);
+				}
+				catalogInfo.showableItem = shf;
+				catalogInfo.itemType = ItemType.HELPFILE;
+				return true;
+			} else {
+				return getHelpFile(catalogInfo, headerData);
+			}
+		} else {
+			return false;
+		}
+	}
+
+	private boolean getMetadataDir(CatalogInfo catalogInfo, HeaderData headerData) {
+		ShowableItem item = this.format.allMetadataDir;
+		if (!item.show) {
+			return false;
+		}
 		String[] metadataNames = catalogInfo.metadataNames;
 		int contador = catalogInfo.metadataCounter++;
-		if (contador < metadataNames.length) {
-			String name = metadataNames[contador];
-			String value = catalogInfo.metadataValues[contador].replaceAll("[^a-zA-Z0-9]","-");
-			String ne = name + "=" + value;
-			headerData.setFileName("all-metadata\\" + ne  + ".metadata");
+		File f = new File(catalogInfo.arcName);
+		String docName = f.getName();
+		if (contador < metadataNames.length) {			
+			String itemName = replaceVariables(item, contador, metadataNames.length, docName, metadataNames[contador], catalogInfo.metadataValues[contador]);
+			headerData.setFileName(itemName);
 			headerData.setUnpSize(catalogInfo.sbMetadata.length());
+			catalogInfo.itemType = ItemType.METADATA;
+			catalogInfo.showableItem = item;
 			return true;
 		} else {
 			return false;
 		}
 	}
 	
-	private boolean getImportantMetadata(CatalogInfo catalogInfo, HeaderData headerData) {
-		String[] metadataNames = catalogInfo.importantMetadataNames;
-		int contador = catalogInfo.importantMetadataCounter++;
-		if (contador < metadataNames.length) {
-			String name = metadataNames[contador];
-			String value = catalogInfo.importantMetadataValues[contador];
-			String ne = name + "=" + value.replaceAll("[^a-zA-Z0-9 ]","-");
-			headerData.setFileName("_" + ne  + ".metadata");
-			headerData.setUnpSize(catalogInfo.sbMetadata.length());
-			return true;
+	private boolean getSpecificMetadata(CatalogInfo catalogInfo, HeaderData headerData) {
+		if (!(this.format instanceof SpecificFormat)) {
+			return false;
+		}
+		SpecificFormat format = (SpecificFormat) this.format;
+		List<SpecificMetadata> specificMetadata = format.specificMetadata;
+		int contador = catalogInfo.specificMetadataCounter++;
+		File f = new File(catalogInfo.arcName);
+		String docName = f.getName();
+		if (contador < specificMetadata.size()) {
+			SpecificMetadata metadata = specificMetadata.get(contador);
+			if (metadata.show) {
+				String name = metadata.metadataName;
+				String value = getMetadataValue(catalogInfo, name);
+				if (value == null) {
+					value = "not found";
+				}
+				String itemName = replaceVariables(metadata, contador, specificMetadata.size(), docName, name, value);
+				headerData.setFileName(itemName);
+				if (log.isDebugEnabled()) {
+					log.debug("getSpecificMetadata: itemName=" + itemName + ";");
+				}
+				headerData.setUnpSize(catalogInfo.sbMetadata.length());
+				catalogInfo.itemType = ItemType.METADATA;
+				catalogInfo.showableItem = metadata;
+				return true;
+			} else {
+				return getSpecificMetadata(catalogInfo, headerData);
+			}
 		} else {
 			return false;
 		}
 	}
 
 	private boolean getLineAsFile(CatalogInfo catalogInfo, HeaderData headerData) {
+		LinesAsFiles item = this.format.linesAsfiles;
+		if (!item.show) {
+			return false;
+		}
 		int contador = catalogInfo.linesAsFilesCounter++;
+		if (contador == 0) {
+			catalogInfo.linesAsFiles = linesAsFiles(catalogInfo.contents, item.minLength, item.maxLength, item.numberOfLines);
+		}
 		if (contador < catalogInfo.linesAsFiles.size()) {
-			headerData.setFileName(twoDigits(contador) + "." + catalogInfo.linesAsFiles.get(contador)  + ".line");
-			headerData.setUnpSize(catalogInfo.linesAsFiles.get(contador).length());
+			File f = new File(catalogInfo.arcName);
+			String line = catalogInfo.linesAsFiles.get(contador);
+			String itemName = replaceVariables(item, contador, catalogInfo.linesAsFiles.size(), f.getName(), line, "");
+			headerData.setFileName(itemName);
+			headerData.setUnpSize(line.length());
+			catalogInfo.itemType = ItemType.LINE;
 			return true;
 		} else {
 			return false;
 		}
+	}
+
+	private String replaceVariables(ShowableItem item, int contador, int maxNumber, String docName, String varName, String value) {
+		String itemName = item.itemName;
+		int index = docName.lastIndexOf('.');
+		String document;
+		String extension;
+		if (index > 0) {
+			document = docName.substring(0,index);
+		    extension = docName.substring(index+1);
+		} else {
+			document = docName;
+			extension = "";
+		}
+		itemName = itemName.replace("%DOCUMENT%", document);
+		itemName = itemName.replace("%EXTENSION%", extension);
+		itemName = itemName.replace("%LINE%", varName.replaceAll("[^a-zA-Z0-9.]","-"));
+		itemName = itemName.replace("%NAME%", varName.replaceAll("[^a-zA-Z0-9.]","-"));
+		itemName = itemName.replace("%VALUE%", value.replaceAll("[^a-zA-Z0-9.]","-"));
+		itemName = itemName.replace("%NUMBER%", nDigits(contador+1, maxNumber));
+		if (itemName.length() > item.maxLength) {
+			String itemExtension = extension(itemName);
+			if (itemExtension.length() > 0) {
+				itemName = itemName.substring(0, item.maxLength - ".".length() - extension.length());
+				itemName = itemName + "." + itemExtension;
+			} else {
+				itemName = itemName.substring(0, item.maxLength);
+			}
+		}
+		return itemName;
+	}
+	
+	private String getMetadataValue(CatalogInfo catalogInfo, String name) {
+		int i = 0;
+		for (String metadataName: catalogInfo.metadataNames) {
+			if (name.equals(metadataName)) {
+				if (log.isDebugEnabled()) {
+					log.debug("getMetadataValue: name=" + name + ";value=" + catalogInfo.metadataValues[i]);
+				}
+				return catalogInfo.metadataValues[i];
+			}
+			i++;
+		}
+		if (log.isDebugEnabled()) {
+			log.debug("getMetadataValue: name=" + name + ";value=null");
+		}
+		return null;
 	}
 
 	@Override

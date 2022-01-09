@@ -22,21 +22,19 @@ class ConfigTest {
 		
 		Config config = new Config();
 		
-		Config.ShowableHelpFile hfr = new Config.ShowableHelpFile(true, "readme.txt", "README.md");
-		
 		config.helpFiles = new ArrayList<>();
-		config.helpFiles.add(hfr);
-		config.helpFiles.add(new Config.ShowableHelpFile(false, "changes.txt", "changes.md"));
+		config.helpFiles.add(new Config.ShowableHelpFile(true, 200, "help\\readme.txt", "README.md"));
+		config.helpFiles.add(new Config.ShowableHelpFile(true, 200, "help\\how-to-configure.txt", "how-to-configure.md"));
+		config.helpFiles.add(new Config.ShowableHelpFile(true, 200, "help\\changes.txt", "changes.md"));
 		
 		Config.Format defaultFormat = new Config.Format();
-		defaultFormat.allMetadataDir.itemName = "every-metadata/%NAME%=%VALUE%.metadata";
 		config.defaultFormat = defaultFormat;
 
 		Config.SpecificFormat pdfFormat = new Config.SpecificFormat();
 		pdfFormat.extension = "pdf";
 		pdfFormat.specificMetadata = new ArrayList<>();
-		pdfFormat.specificMetadata.add(new Config.SpecificMetadata(true, "title", "pdf:docinfo:title"));
-		pdfFormat.specificMetadata.add(new Config.SpecificMetadata(true, "creator", "pdf:docinfo:creator"));
+		pdfFormat.specificMetadata.add(new Config.SpecificMetadata(true, 200, "%NUMBER%. title=%VALUE%.metadata", "pdf:docinfo:title"));
+		pdfFormat.specificMetadata.add(new Config.SpecificMetadata(true, 200, "%NUMBER%. creator=%VALUE%.metadata", "pdf:docinfo:creator"));
 
 		Config.SpecificFormat wordFormat = new Config.SpecificFormat();
 		wordFormat.extension = "docx";
