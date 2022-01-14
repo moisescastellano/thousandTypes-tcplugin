@@ -12,9 +12,8 @@ import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.StringTokenizer;
-
-import javax.swing.JFrame;
-import javax.swing.JOptionPane;
+import java.util.function.BiFunction;
+import java.util.function.BiPredicate;
 
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.metadata.Metadata;
@@ -30,7 +29,6 @@ import com.fasterxml.jackson.databind.DatabindException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
-import moi.tcplugins.VersionCheck;
 import moi.tcplugins.preview.Config.Format;
 import moi.tcplugins.preview.Config.LinesAsFiles;
 import moi.tcplugins.preview.Config.ShowableHelpFile;
@@ -39,11 +37,10 @@ import moi.tcplugins.preview.Config.ShowableMaxSizeFile;
 import moi.tcplugins.preview.Config.SpecificFormat;
 import moi.tcplugins.preview.Config.SpecificMetadata;
 import plugins.wcx.HeaderData;
-import plugins.wcx.OpenArchiveData;
-import plugins.wcx.WCXPluginAdapter;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
 
 /**
  * @author Moises Castellano 2021-2022
@@ -51,28 +48,60 @@ import org.slf4j.LoggerFactory;
  */
 
 
-public class PreviewPlugin extends WCXPluginAdapter {
+public class PreviewPlugin extends ItemsPlugin {
 	
 	final static Logger log = LoggerFactory.getLogger(PreviewPlugin.class);
-	final static int[] pluginClassLoaderVersion = {2,3,1}; // min pluginClassLoader version 2.3.1
 	private final static String CONFIG_FILE = "config.yaml";
 	
 	Config config;
 	Format format;
-	
-	private enum ItemType {
-		LINE, METADATA, PREVIEW, CONTENTS, HELPFILE, EXCEPTION
+
+	public PreviewPlugin() {
+		setItems();
 	}
 
-	private class CatalogInfo {
-		/**
-		 * The name of the archive.
-		 */
-		private String arcName;
-		
-		public Throwable throwable;
-		public Throwable nonBlockingthrowable;
-		public int msgCount; 
+	enum ItemEnum {
+		THROWABLE(false), CONTENTS(false), PREVIEW(false), METADATA_FILE(false), HELP_FILE(true), 
+		METADATA_SPECIFIC(true), METADATA_DIR(true), LINE(true), FINISH(false);
+		private static ItemEnum[] vals = values();
+		BiPredicate<CatalogInfo, HeaderData> getter; // returns whether getting the item was successful
+		BiFunction<CatalogInfo, ItemEnum, ItemEnum>  nextIfSuccess; // returns the next element if getter was sucessful
+		SaverFunction saver; // saves the item
+		private ItemEnum(boolean multiple) {
+			this.nextIfSuccess = multiple ? (c,i)->i: (c,i)->i.next();
+		}
+		public ItemEnum next() {
+	        return vals[(this.ordinal()+1)];
+	    }
+	    public void set(BiPredicate<CatalogInfo, HeaderData> getter, SaverFunction saver) {
+	    	this.getter = getter;
+	    	this.saver = saver;
+	    }
+	    public void setNextIfSuccess(BiFunction<CatalogInfo, ItemEnum, ItemEnum> nextIfSuccess) {
+	    	this.nextIfSuccess = nextIfSuccess;
+	    }
+	} 
+	
+	private void setItems() {
+		SaverFunction metadataSaver = (c,f)->save(f, c.sbMetadata.toString());
+		SaverFunction previewSaver = (c,f)->save(f, c.contents);
+
+		ItemEnum.THROWABLE.set((c,h)->getBlockingThrowable(c,h), (c,f)->save(f, c.throwableToShow));
+		ItemEnum.THROWABLE.setNextIfSuccess((c,i)->ItemEnum.FINISH);
+
+		ItemEnum.CONTENTS.set((c,h)->getMainFile(c,h), contentsSaver); 				
+		ItemEnum.CONTENTS.setNextIfSuccess((c,i)->c.everythingRead ? ItemEnum.PREVIEW.next() : ItemEnum.PREVIEW); // skip preview if everything has already read
+
+		ItemEnum.PREVIEW.set((c,h)->getPreviewFile(c,h), previewSaver);
+		ItemEnum.METADATA_FILE.set((c,h)->getMetadataFile(c,h), metadataSaver);
+		ItemEnum.HELP_FILE.set((c,h)->getHelpFile(c,h), helpFileSaver);
+		ItemEnum.METADATA_SPECIFIC.set((c,h)->getSpecificMetadata(c,h), metadataSaver);
+		ItemEnum.METADATA_DIR.set((c,h)->getMetadataDir(c,h), metadataSaver);
+		ItemEnum.LINE.set((c,h)->getLineAsFile(c,h), previewSaver);
+		ItemEnum.FINISH.set(null,null);
+	}
+
+	protected static class CatalogInfo extends CatalogBase {
 		
 		public int linesAsFilesCounter;
 		public List<String> linesAsFiles;
@@ -89,34 +118,18 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		public boolean everythingRead;
 		public String contents;
 		
-		public ItemType itemType;
 		public ShowableItem showableItem;
 
 	}
 	
-	@Override
-	public Object openArchive(OpenArchiveData archiveData) {
-		if (log.isDebugEnabled()) {
-			log.debug(PreviewPlugin.class + ".openArchive(archiveData)");
-		}
-		File path = new File(archiveData.getArcName());
-		CatalogInfo catalogInfo = new CatalogInfo();
-		catalogInfo.arcName = archiveData.getArcName();			
-		try {
-			VersionCheck.checkPluginClassLoaderVersion(pluginClassLoaderVersion);
-			readConfig(archiveData.getArcName());
-			parse(catalogInfo, path, format.preview.maxSize);
-		} catch (Throwable e) {
-			JFrame frame = new JFrame();
-			JOptionPane.showMessageDialog(frame, e.getMessage(), "Error on openArchive", JOptionPane.ERROR_MESSAGE);
-			catalogInfo.throwable = e;
-		}
-		
-		return catalogInfo;
+	protected void onOpenArchive(CatalogInfo catalogInfo) throws Exception {
+		File path = new File(catalogInfo.arcName);
+		readConfig(catalogInfo.arcName);
+		parse(catalogInfo, path, format.preview.maxSize);
+		catalogInfo.nextItemToShow = ItemEnum.THROWABLE;
 	}
 	
-
-	private void readConfig(String arcName) throws IOException, StreamReadException, DatabindException {
+	void readConfig(String arcName) throws IOException, StreamReadException, DatabindException {
 		ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
 		InputStream is = PreviewPlugin.class.getClassLoader().getResourceAsStream(CONFIG_FILE);
 		this.config = mapper.readValue(is, Config.class);
@@ -135,7 +148,7 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		}
 	}
 	
-	private void parse(CatalogInfo catalogInfo, File path, int writeLimit) throws IOException, TikaException, SAXException {
+	void parse(CatalogInfo catalogInfo, File path, int writeLimit) throws IOException, TikaException, SAXException {
 
 	   	if (log.isDebugEnabled()) {
 	   		log.debug("in parse: path=[" + path + "]");
@@ -196,9 +209,7 @@ public class PreviewPlugin extends WCXPluginAdapter {
    	}
 
    	private void insert (List<String> linesAsFiles, StringBuffer sb, String next, int minLineLength, int maxLineLength, int maxNumLines) {
-	    if (log.isDebugEnabled()) {
-		      log.debug("insert: linesAsFiles.size=" + linesAsFiles.size() + ";sb=[" + sb + "]; next=[" + next + "].");
-	    }
+	    if (log.isDebugEnabled()) log.debug("insert: linesAsFiles.size=" + linesAsFiles.size() + ";sb=[" + sb + "]; next=[" + next + "].");
 	   	if (sb.length() + " ".length() + next.length() > maxLineLength) {
 	   		if (sb.length() >= minLineLength) {
 	   			linesAsFiles.add(sb.toString());
@@ -255,74 +266,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		}
 	}
 	
-	@Override
-	public int closeArchive(Object archiveData) {
-		if (log.isDebugEnabled()) {
-			log.debug(this.getClass().getName() + ".closeArchive(archiveData)");
-		}
-		return SUCCESS;
-	}
-
-	@Override
-	public int processFile(Object archiveData, int operation, String destPath, String destName) {
-		if (log.isDebugEnabled()) {
-			log.debug(this.getClass().getName() + ".processFile(archiveData, operation=["+operation+"], destPath=["+destPath+"];destName=["+destName+"]");
-		}
-		CatalogInfo catalogInfo = (CatalogInfo) archiveData;
-		String fullDestName = (destPath==null?"":destPath) + destName;
-		try {
-			if (operation == PK_EXTRACT) {
-				if (log.isDebugEnabled()) log.debug(this.getClass().getName() + ".processFile() EXTRACT from:[" + catalogInfo.arcName + "] to: [" + fullDestName + "]");
-				if (catalogInfo.throwable != null) {
-					return save(catalogInfo, new File(fullDestName), catalogInfo.throwable, false);
-				}
-				if (catalogInfo.itemType == ItemType.EXCEPTION) {
-					return save(catalogInfo, new File(fullDestName), catalogInfo.nonBlockingthrowable, false);
-				}
-				if (catalogInfo.itemType == ItemType.METADATA) {
-					return save(catalogInfo, new File(fullDestName), catalogInfo.sbMetadata.toString(), false);
-				}
-				if (catalogInfo.itemType == ItemType.PREVIEW || catalogInfo.itemType == ItemType.LINE){
-					return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
-				}
-				if (catalogInfo.itemType == ItemType.HELPFILE) {
-					Config.ShowableHelpFile shf = (Config.ShowableHelpFile) catalogInfo.showableItem;
-					InputStream is = PreviewPlugin.class.getResourceAsStream("/" + shf.originFileName);
-					return copyStream(is, new File(fullDestName), false);
-				}
-				if (catalogInfo.itemType == ItemType.CONTENTS){
-					if  (catalogInfo.everythingRead) {
-						return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
-					}
-					File path = new File(catalogInfo.arcName);
-					parse(catalogInfo, path, format.contents.maxSize);
-					return save(catalogInfo, new File(fullDestName), catalogInfo.contents, false);
-				}
-				throw new Exception("Not expected case");
-			} else if (operation == PK_TEST) {
-				if (log.isDebugEnabled()) {
-					log.debug(this.getClass().getName() + ".processFile() TEST " + (destPath==null?"":destPath) + destName);
-				}
-				// return checkFile(new File(fullOriginName), headerData.getFileCRC());
-			} else if (operation == PK_SKIP) {
-				if (log.isDebugEnabled()) {
-					log.debug(this.getClass().getName() + ".processFile() SKIP " + (destPath==null?"":destPath) + destName);
-				}
-			}
-		} catch (Throwable t) {
-			log.error(t.getMessage(), t);
-			try {
-				JFrame frame = new JFrame();
-				JOptionPane.showMessageDialog(frame, t.getMessage(), "Error on processFile", JOptionPane.ERROR_MESSAGE);
-				return save(catalogInfo, new File(fullDestName), t, false);
-			} catch (Throwable t2) {
-				log.error(t.getMessage(), t2);
-				return E_EWRITE;
-			}
-		}
-		return SUCCESS;
-	}
-	
 	private String extension(File file) {
 		return extension(file.getName());
 	}
@@ -336,98 +279,14 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		return extension;
 	}
 
-	@Override
-	public int readHeader(Object archiveData, HeaderData headerData) {
-		if (log.isDebugEnabled()) {
-			log.debug(this.getClass().getName() + ".readHeader(archiveData, headerData)");
+	private boolean getBlockingThrowable(CatalogInfo catalogInfo, HeaderData headerData) {
+		if (catalogInfo.blockingThrowable == null) {
+			return false;
 		}
-		CatalogInfo catalogInfo = null;
-		int previousMsgCount = 0;
-		try {
-			catalogInfo = (CatalogInfo) archiveData;
-			previousMsgCount = catalogInfo.msgCount;
-			headerData.setArcName(catalogInfo.arcName);
-			if (catalogInfo.throwable != null) {
-				Throwable t = catalogInfo.throwable;
-				log.debug("Error parsing file", t);
-				switch (catalogInfo.msgCount++) {
-				case 0:
-					headerData.setFileName(t.getMessage() + ".exception");
-					log.debug("SUCCESS after throwable");
-					return SUCCESS;
-				default:
-					return E_END_ARCHIVE;
-				}
-			}
-			switch (catalogInfo.msgCount) {
-			case 0:
-				catalogInfo.msgCount++;
-				if (getMainFile(catalogInfo, headerData)) {
-					log.debug("SUCCESS on main file" + catalogInfo.msgCount);
-					if (catalogInfo.everythingRead) {
-						catalogInfo.msgCount++; // skip preview as everything has already read and shown
-					}
-					return SUCCESS;
-				}
-				// do not break, let it continue to next case
-			case 1:
-				catalogInfo.msgCount++;
-				if (getPreviewFile(catalogInfo, headerData)) {
-					return SUCCESS;
-				}
-				// do not break, let it continue to next case
-			case 2:
-				catalogInfo.msgCount++;
-				if (getMetadataFile(catalogInfo, headerData)) {
-					return SUCCESS;
-				}
-				// do not break, let it continue to next case
-			case 3:
-				if (getHelpFile(catalogInfo, headerData)) {
-					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getHelpFile");
-					return SUCCESS;
-				} else {
-					catalogInfo.msgCount++;
-					// do not break, let it continue to next case
-				}
-			case 4:
-				if (getSpecificMetadata(catalogInfo, headerData)) {
-					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getSpecificMetadata");
-					return SUCCESS;
-				} else {
-					catalogInfo.msgCount++;
-					// do not break, let it continue to next case
-				}
-			case 5:
-				if (getMetadataDir(catalogInfo, headerData)) {
-					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getMetadataDir");
-					return SUCCESS;
-				} else {
-					catalogInfo.msgCount++;
-					// do not break, let it continue to next case
-				}
-			case 6:
-				if (getLineAsFile(catalogInfo, headerData)) {
-					if (log.isDebugEnabled()) log.debug("readHeader: SUCCESS getLineAsFile");
-					return SUCCESS;
-				} else {
-					catalogInfo.msgCount++;
-					// do not break, let it continue to next case
-				}
-			default:
-				return E_END_ARCHIVE;
-			}
-
-		} catch (Throwable e) {
-			if (log.isErrorEnabled()) log.error(e.getMessage(), e);
-			headerData.setFileName(e.getMessage() + ".exception");
-			headerData.setUnpSize(e.getMessage().length());
-			catalogInfo.nonBlockingthrowable = e;
-			catalogInfo.msgCount = previousMsgCount + 1;
-			catalogInfo.itemType = ItemType.EXCEPTION;
-			if (log.isDebugEnabled()) log.debug("SUCCESS after throwable",e);
-			return SUCCESS;
-		}
+		catalogInfo.throwableToShow = catalogInfo.blockingThrowable;
+		headerData.setFileName(catalogInfo.throwableToShow.getMessage() + ".exception");
+		headerData.setUnpSize(catalogInfo.throwableToShow.getMessage().length());
+		return true;
 	}
 
 	private boolean getMainFile(CatalogInfo catalogInfo, HeaderData headerData) {
@@ -440,7 +299,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		} else {
 			headerData.setUnpSize(new File(catalogInfo.arcName).length());
 		}
-		catalogInfo.itemType = ItemType.CONTENTS;
 		return getFile(item, catalogInfo, headerData);
 	}
 
@@ -450,7 +308,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		}
 		ShowableMaxSizeFile item = this.format.preview;
 		headerData.setUnpSize(catalogInfo.contents.length());
-		catalogInfo.itemType = ItemType.PREVIEW;
 		return getFile(item, catalogInfo, headerData);
 	}
 
@@ -460,7 +317,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		}
 		ShowableItem item = this.format.allMetadataFile;
 		headerData.setUnpSize(catalogInfo.sbMetadata.length());
-		catalogInfo.itemType = ItemType.METADATA;
 		return getFile(item, catalogInfo, headerData);
 	}
 	
@@ -484,7 +340,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 					log.debug("createHelpFile: name=" + shf.itemName);
 				}
 				catalogInfo.showableItem = shf;
-				catalogInfo.itemType = ItemType.HELPFILE;
 				return true;
 			} else {
 				return getHelpFile(catalogInfo, headerData);
@@ -507,7 +362,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			String itemName = replaceVariables(item, contador, metadataNames.length, docName, metadataNames[contador], catalogInfo.metadataValues[contador]);
 			headerData.setFileName(itemName);
 			headerData.setUnpSize(catalogInfo.sbMetadata.length());
-			catalogInfo.itemType = ItemType.METADATA;
 			catalogInfo.showableItem = item;
 			return true;
 		} else {
@@ -538,7 +392,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 					log.debug("getSpecificMetadata: itemName=" + itemName + ";");
 				}
 				headerData.setUnpSize(catalogInfo.sbMetadata.length());
-				catalogInfo.itemType = ItemType.METADATA;
 				catalogInfo.showableItem = metadata;
 				return true;
 			} else {
@@ -564,7 +417,6 @@ public class PreviewPlugin extends WCXPluginAdapter {
 			String itemName = replaceVariables(item, contador, catalogInfo.linesAsFiles.size(), f.getName(), line, "");
 			headerData.setFileName(itemName);
 			headerData.setUnpSize(line.length());
-			catalogInfo.itemType = ItemType.LINE;
 			return true;
 		} else {
 			return false;
@@ -618,12 +470,22 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		return null;
 	}
 
-	@Override
-	public int getPackerCaps() {
-		return PK_CAPS_HIDE | /* PK_CAPS_NEW | */ PK_CAPS_MULTIPLE | PK_CAPS_MEMPACK;
-	}
+	private SaverFunction helpFileSaver = (c,f) -> {
+		Config.ShowableHelpFile shf = (Config.ShowableHelpFile) c.showableItem;
+		InputStream is = PreviewPlugin.class.getResourceAsStream("/" + shf.originFileName);
+		return copyStream(is, f, false);
+	};
+	
+	private SaverFunction contentsSaver = (c,f) -> {
+		if  (c.everythingRead) {
+			return save(f, c.contents);
+		}
+		File path = new File(c.arcName);
+		parse(c, path, format.contents.maxSize);
+		return save(f, c.contents);
+	};
 
-	private int save (CatalogInfo cinfo, final File dest, Throwable t, final boolean overwrite) {
+	private int save (final File dest, Throwable t) {
 		if (log.isWarnEnabled()) {
 			log.warn("saving throwable",t);
 		}
@@ -631,13 +493,10 @@ public class PreviewPlugin extends WCXPluginAdapter {
 		PrintWriter pw = new PrintWriter(sw);
 		t.printStackTrace(pw);
 		pw.flush();
-		return save(cinfo, dest, sw.toString(), overwrite);
+		return save(dest, sw.toString());
 	}
 	
-	private int save (CatalogInfo cinfo, final File dest, String contents, final boolean overwrite) {
-		if (overwrite) {
-			dest.delete();
-		}
+	private int save (final File dest, String contents) {
 		if (dest.exists()) {
 			return E_ECREATE;
 		}
