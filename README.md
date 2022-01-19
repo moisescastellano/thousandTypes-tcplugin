@@ -19,7 +19,7 @@ In that "simulated folder" you can see at a glance:
 
 This info is shown as file names, so that you can have a very quick preview, and then if needed extract to a file or view the complete document's metadata or contents.
 
-![ThousandTypes screenshot](https://github.com/moisescastellano/thousandTypes-tcplugin/main/screenshots/thousandTypes_packer-plugin.png)
+![ThousandTypes screenshot](https://github.com/moisescastellano/thousandTypes-tcplugin/raw/main/screenshots/thousandTypes_packer-plugin.png)
 
 The Thousand Types lister plugin (coming soon)
 --------------------------------
