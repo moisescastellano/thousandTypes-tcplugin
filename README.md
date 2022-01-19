@@ -1,12 +1,14 @@
 The Thousand File Types Preview [Total Commander](https://www.ghisler.com/) plugin
 ==================================================================================
 
+This plugin allows TC to show a very quick text preview of almost **every file format**. It comes in two flavors: packer and lister plugin.
+
 Have you ever being checking what's inside of a lot of documents such as PDFs or .doc files, 
 spending a lot of time waiting for a new Acrobat Reader, MS-Word or Whatever-program to open, just to close it and continuing the process?
 
-This plugin comes in two versions: packer and lister plugin.
+Have you ever wondered what a particular file contained, not having the associated application to open it?
 
-Packer plugin allows Total Commander to **very quickly (*)** "enter" (ctrl + pgDown) docs as if they were archives or folders. 
+**Packer plugin** allows Total Commander to **very quickly (*)** "enter" (ctrl + pgDown) docs as if they were archives or folders. 
 In that "simulated folder" you can see at a glance:
  - a plain-text preview (or whole contents) of the document, that you can then view(F3) or extract (F5)
  - document metadata: author, version, creator tool...
@@ -14,11 +16,14 @@ In that "simulated folder" you can see at a glance:
 
 This info is shown as file names, so that you can have a very quick preview, and then if needed extract to a file or view the complete document's metadata or contents.
 
-Lister plugin coming soon.
+**Lister plugin** will show (F3) the text of the document, even if you dont have the corresponding appplication.
+
+** Lister plugin coming soon.** 
 
 (Image)
 
-(*) The first time you open a doc it will take a couple seconds as the JVM loads into memory; then the preview is as quick as entering a folder in the local system
+(*) The first time you open a doc it will take a couple seconds as the JVM loads into memory; 
+next times the preview is as quick as entering a folder in the local system
 
 ### A thousand formats is an exaggeration, right?
 
