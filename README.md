@@ -58,10 +58,9 @@ Don't panic! TC lets you associate more extensions to the plugin and you can eas
 Download and resources
 ----------------------
 - Download the [latest release in this project](https://github.com/moisescastellano/thousandTypes-tcplugin/blob/main/releases)
-- [Plugin page at totalcmd.net](http://totalcmd.net/plugring/thousand-types.html)
+- [Plugin page at totalcmd.net](http://totalcmd.net/plugring/thousand_types.html)
 - [Github page](https://moisescastellano.github.io/thousandTypes-tcplugin/)
 - [Github project](https://github.com/moisescastellano/thousandTypes-tcplugin)
-- TO BE UPDATED: [Thread for discussing this plugin](https://www.ghisler.ch/board/viewtopic.php?t=75793) at the TC forum
 - This is a work in progress, you can help with [things to do](https://moisescastellano.github.io/thousand-preview-plugin/to-do)
 
 [Troubleshooting guide](https://moisescastellano.github.io/tcmd-java-plugin/troubleshooting)
@@ -88,7 +87,7 @@ For other issues you can open a project issue or contact me - see next paragraph
 ----------------------
 This is a work in progress. **Help wanted!** - in particular with Visual C++ issues.
  - Refer to [things to do](https://github.com/moisescastellano/thousandTypes-tcplugin/blob/main/to-do.md) for work in progress.
- - Check also the [issues page](https://github.com/moisescastellano/thousand-preview-plugin/issues) for this plugin.
+ - Check also the [issues page](https://github.com/moisescastellano/thousandTypes-tcplugin/issues) for this plugin.
  - Java Plugin Interface's [issues page](https://github.com/moisescastellano/tcmd-java-plugin/issues).
 
 Contact
@@ -96,9 +95,9 @@ Contact
 
 If you have any comment, suggestion or problem regarding this java plugin,
 you can contact me at:
- - email: moises.castellano (at) gmail.com
- 
- - [Github project issues page](https://github.com/moisescastellano/thousand-preview-tcplugin/issues)
+ - [Thread for discussing this plugin](https://www.ghisler.ch/board/viewtopic.php?t=75920) at the TC forum
+ - email: moises.castellano (at) gmail.com 
+ - [Github project issues page](https://github.com/moisescastellano/thousandTypes-tcplugin/issues)
 
 Please detail the specific version of: Java plugin interface, Total Commander and JRE that you are using.
 
