@@ -27,7 +27,7 @@ The Thousand Types lister plugin (coming soon)
 **Lister plugin** shows (F3) the text of the document in the integrated Total Commander Lister, even if you dont have the corresponding appplication.
 
 **Note:** The first time you open a doc with a Java plugin, it will take a couple seconds as the JVM loads into memory; 
-next times the preview is as quick as entering a folder in the local system
+next times the preview is as quick as entering a folder in the local system.
 
 FAQ
 ---
