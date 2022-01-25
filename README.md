@@ -11,9 +11,9 @@ This plugin allows TC to show a very quick text preview of almost **every file f
 The Thousand Types packer plugin
 --------------------------------
 
-**Packer plugin** allows Total Commander to **very quickly ** "enter" (ctrl + pgDown) docs as if they were archives or folders. 
+**Packer plugin** allows Total Commander to **very quickly** "enter" (ctrl + pgDown) docs as if they were archives or folders. 
 In that "simulated folder" you can see at a glance:
- - a plain-text preview (or whole contents) of the document, that you can then view(F3) or extract (F5)
+ - a plain-text preview (or whole contents) of the document, that you can then view (F3) or extract (F5)
  - document metadata: author, version, creator tool...
  - first lines preview of the contents shown as file names, so that you dont even have to open any file in the folder
 
